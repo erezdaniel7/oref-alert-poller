@@ -4,17 +4,25 @@ import http from "http";
 import https from "https";
 
 // ── Load config ─────────────────────────────────────────────────────────────
+interface WatcherAction {
+    telegramChatIds?: string[];
+    abaBotChatIds?: string[];
+    haWebhookTokens?: string[];
+}
+
+interface Watcher {
+    watchCities: string[];
+    action: WatcherAction;
+    useHistoryFallback: boolean;
+}
+
 interface AppConfig {
     telegramToken: string;
-    telegramChatId: string;
     abaBotUrl: string;
-    abaBotChatId: string;
-    abaBotFamilyChatId: string;
     haWebhookUrl: string;
-    watchedCities: string[];
-    homeCity: string;
     pollIntervalMs: number;
     historyPollIntervalMs: number;
+    watchers: Watcher[];
 }
 
 const CONFIG_PATH = path.join(__dirname, "..", "config.json");
@@ -33,26 +41,26 @@ const FILTERED_LOG = path.join(LOG_DIR, "my_alerts.log");
 const POLL_INTERVAL_MS = config.pollIntervalMs;
 const HISTORY_POLL_INTERVAL_MS = config.historyPollIntervalMs;
 const HISTORY_MAX_AGE_MS = 10 * 60 * 1000; // only care about alerts from last 10 min
-
-// History URL – city is URL-encoded from config
-const HOME_CITY = config.homeCity;
-const HOME_HISTORY_URL =
-    `https://alerts-history.oref.org.il//Shared/Ajax/GetAlarmsHistory.aspx?lang=he&mode=1&city_0=${encodeURIComponent(HOME_CITY)}`;
+const HISTORY_BASE_URL = "https://alerts-history.oref.org.il//Shared/Ajax/GetAlarmsHistory.aspx?lang=he&mode=1";
 
 // Telegram bot config
 const TELEGRAM_TOKEN = config.telegramToken;
-const TELEGRAM_CHAT_ID = config.telegramChatId;
 
 // Aba bot config
 const ABA_BOT_URL = config.abaBotUrl;
-const ABA_BOT_CHAT_ID = config.abaBotChatId;
-const ABA_BOT_FAMILY_CHAT_ID = config.abaBotFamilyChatId;
 
-// Home Assistant webhook config
+// Home Assistant config
 const HA_WEBHOOK_URL = config.haWebhookUrl;
 
-// Cities to watch – exact area names from oref
-const WATCHED_CITIES: string[] = config.watchedCities;
+// Collect all watched cities and history cities from watchers
+const ALL_WATCHED_CITIES = new Set<string>();
+const HISTORY_CITIES = new Set<string>();
+for (const w of config.watchers) {
+    for (const city of w.watchCities) {
+        ALL_WATCHED_CITIES.add(city);
+        if (w.useHistoryFallback) HISTORY_CITIES.add(city);
+    }
+}
 
 // ── Category → emoji map ────────────────────────────────────────────────────
 const CATEGORY_EMOJI: Record<number, string> = {
@@ -124,10 +132,6 @@ function appendToFilteredLog(message: string): void {
     fs.appendFileSync(FILTERED_LOG, line, "utf-8");
 }
 
-function cityMatches(city: string): boolean {
-    return WATCHED_CITIES.includes(city);
-}
-
 function getEmoji(cat: string): string {
     const num = parseInt(cat, 10);
     return CATEGORY_EMOJI[num] ?? "❓";
@@ -161,9 +165,10 @@ interface HAPayload {
     area: string;
 }
 
-function sendHomeAssistant(data: HAPayload): void {
+function sendHomeAssistant(data: HAPayload, webhookToken: string): void {
     const payload = JSON.stringify(data);
-    const urlObj = new URL(HA_WEBHOOK_URL);
+    const fullUrl = `${HA_WEBHOOK_URL}/${webhookToken}`;
+    const urlObj = new URL(fullUrl);
     const req = http.request(
         {
             hostname: urlObj.hostname,
@@ -193,7 +198,7 @@ function sendHomeAssistant(data: HAPayload): void {
 }
 
 // ── Aba Bot (WhatsApp) ──────────────────────────────────────────────────────
-function sendAbaBot(text: string, chatId: string = ABA_BOT_CHAT_ID): void {
+function sendAbaBot(text: string, chatId: string): void {
     const payload = JSON.stringify({
         chatId,
         content: text,
@@ -229,10 +234,10 @@ function sendAbaBot(text: string, chatId: string = ABA_BOT_CHAT_ID): void {
 }
 
 // ── Telegram ────────────────────────────────────────────────────────────────
-function sendTelegram(text: string): void {
+function sendTelegram(text: string, chatId: string): void {
     const url = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`;
     const payload = JSON.stringify({
-        chat_id: TELEGRAM_CHAT_ID,
+        chat_id: chatId,
         text,
         parse_mode: "Markdown",
     });
@@ -312,10 +317,9 @@ function processAlert(alert: OrefAlert): void {
     if (processedAlertIds.has(alert.id)) return;
     processedAlertIds.add(alert.id);
 
-    const matchedCities = alert.data.filter(cityMatches);
-    if (matchedCities.length === 0) return;
+    const anyMatch = alert.data.some(city => ALL_WATCHED_CITIES.has(city));
+    if (!anyMatch) return;
 
-    // Log raw alert only if it has matching cities
     appendToRawLog(JSON.stringify(alert));
 
     const emoji = getEmoji(alert.cat);
@@ -323,53 +327,44 @@ function processAlert(alert: OrefAlert): void {
     const now = Date.now();
     const localTime = new Date().toLocaleTimeString("he-IL", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
-    // 1. Home city first — most important, send immediately
-    if (matchedCities.includes(HOME_CITY)) {
-        const key = `${HOME_CITY}|${alert.title}`;
-        const lastTime = lastNotified.get(key);
-        if (!lastTime || now - lastTime >= COOLDOWN_MS) {
-            lastNotified.set(key, now);
-            const message = `${emoji} - *${alert.title}*\n${desc}\n📍 ${HOME_CITY}\n🕐 ${localTime}`;
-            appendToFilteredLog(message.replace(/\n/g, "----"));
-            sendTelegram(message);
-            sendAbaBot(message);
-            sendAbaBot(message, ABA_BOT_FAMILY_CHAT_ID);
-            sendHomeAssistant({
-                emoji,
-                title: alert.title,
-                desc,
-                category: alert.cat,
-                message,
-                area: HOME_CITY,
-            });
-        }
-    }
+    for (let wi = 0; wi < config.watchers.length; wi++) {
+        const watcher = config.watchers[wi];
+        const matchedCities = alert.data.filter(city => watcher.watchCities.includes(city));
+        if (matchedCities.length === 0) continue;
 
-    // 2. Collect remaining cities not in cooldown, send as one merged message
-    const otherCities = matchedCities.filter((city) => {
-        if (city === HOME_CITY) return false;
-        const key = `${city}|${alert.title}`;
-        const lastTime = lastNotified.get(key);
-        return !lastTime || now - lastTime >= COOLDOWN_MS;
-    });
+        const citiesToNotify = matchedCities.filter(city => {
+            const key = `w${wi}|${city}|${alert.title}`;
+            const lastTime = lastNotified.get(key);
+            return !lastTime || now - lastTime >= COOLDOWN_MS;
+        });
+        if (citiesToNotify.length === 0) continue;
 
-    if (otherCities.length > 0) {
-        for (const city of otherCities) {
-            lastNotified.set(`${city}|${alert.title}`, now);
+        for (const city of citiesToNotify) {
+            lastNotified.set(`w${wi}|${city}|${alert.title}`, now);
         }
-        const cityList = otherCities.map((c) => `📍 ${c}`).join("\n");
+
+        const cityList = citiesToNotify.map(c => `📍 ${c}`).join("\n");
         const message = `${emoji} - *${alert.title}*\n${desc}\n${cityList}\n🕐 ${localTime}`;
         appendToFilteredLog(message.replace(/\n/g, "----"));
-        sendTelegram(message);
-        sendAbaBot(message);
+
+        for (const chatId of watcher.action.telegramChatIds ?? []) {
+            sendTelegram(message, chatId);
+        }
+        for (const chatId of watcher.action.abaBotChatIds ?? []) {
+            sendAbaBot(message, chatId);
+        }
+        for (const token of watcher.action.haWebhookTokens ?? []) {
+            sendHomeAssistant({ emoji, title: alert.title, desc, category: alert.cat, message, area: citiesToNotify.join(", ") }, token);
+        }
     }
 }
 
 // ── History fetch & process ─────────────────────────────────────────────────
-function fetchHistory(): Promise<string> {
+function fetchHistory(city: string): Promise<string> {
+    const historyUrl = `${HISTORY_BASE_URL}&city_0=${encodeURIComponent(city)}`;
     return new Promise((resolve, reject) => {
         const req = https.get(
-            HOME_HISTORY_URL,
+            historyUrl,
             {
                 headers: {
                     Accept: "application/json",
@@ -418,49 +413,54 @@ function processHistoryAlerts(alerts: HistoryAlert[]): void {
 
     processedHistoryRids.add(ha.rid);
 
-    // Build cooldown key matching the main poller format (city + title text, no category)
     const emoji = getEmoji(String(ha.category));
-    const cooldownKey = `${ha.data}|${ha.category_desc}`;
-    const lastTime = lastNotified.get(cooldownKey);
-
-    // If main poller already sent this within cooldown, skip
-    if (lastTime && now - lastTime < COOLDOWN_MS) return;
-
-    // This is a missed alert — send as late notification
-    lastNotified.set(cooldownKey, now);
-
     const localTime = new Date().toLocaleTimeString("he-IL", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
     const message = `${emoji} - *${ha.category_desc}*\n📍 ${ha.data}\n⏰ שעת התרעה: ${ha.time}\n🕐 נשלח באיחור: ${localTime}\n⚠️ *התרעה באיחור!*`;
+    let sent = false;
 
-    appendToFilteredLog(message.replace(/\n/g, "----"));
-    sendTelegram(message);
-    sendAbaBot(message);
-    // sendAbaBot(message, ABA_BOT_FAMILY_CHAT_ID);
-    sendHomeAssistant({
-        emoji,
-        title: ha.category_desc,
-        desc: ha.category_desc,
-        category: String(ha.category),
-        message,
-        area: ha.data,
-    });
+    for (let wi = 0; wi < config.watchers.length; wi++) {
+        const watcher = config.watchers[wi];
+        if (!watcher.useHistoryFallback) continue;
+        if (!watcher.watchCities.includes(ha.data)) continue;
+
+        const cooldownKey = `w${wi}|${ha.data}|${ha.category_desc}`;
+        const lastTime = lastNotified.get(cooldownKey);
+        if (lastTime && now - lastTime < COOLDOWN_MS) continue;
+        lastNotified.set(cooldownKey, now);
+        if (!sent) {
+            appendToFilteredLog(message.replace(/\n/g, "----"));
+            sent = true;
+        }
+
+        for (const chatId of watcher.action.telegramChatIds ?? []) {
+            sendTelegram(message, chatId);
+        }
+        for (const chatId of watcher.action.abaBotChatIds ?? []) {
+            sendAbaBot(message, chatId);
+        }
+        for (const token of watcher.action.haWebhookTokens ?? []) {
+            sendHomeAssistant({ emoji, title: ha.category_desc, desc: ha.category_desc, category: String(ha.category), message, area: ha.data }, token);
+        }
+    }
 }
 
 async function pollHistory(): Promise<void> {
-    try {
-        const body = await fetchHistory();
-        const trimmed = body.trim();
-        if (trimmed.length === 0) return;
-
+    for (const city of HISTORY_CITIES) {
         try {
-            const alerts: HistoryAlert[] = JSON.parse(trimmed);
-            processHistoryAlerts(alerts);
-        } catch {
-            // Not valid JSON – skip
+            const body = await fetchHistory(city);
+            const trimmed = body.trim();
+            if (trimmed.length === 0) continue;
+
+            try {
+                const alerts: HistoryAlert[] = JSON.parse(trimmed);
+                processHistoryAlerts(alerts);
+            } catch {
+                // Not valid JSON – skip
+            }
+        } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            console.error(`[${getTimestamp()}] Error fetching history for ${city}: ${message}`);
         }
-    } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.error(`[${getTimestamp()}] Error fetching history: ${message}`);
     }
 }
 
@@ -495,8 +495,8 @@ function main(): void {
     poll();
     setInterval(poll, POLL_INTERVAL_MS);
 
-    // History backup poller for home city (every 10s)
-    console.log(`History poll: ${HOME_HISTORY_URL} every ${HISTORY_POLL_INTERVAL_MS}ms`);
+    // History backup poller (every 10s)
+    console.log(`History poll: ${HISTORY_CITIES.size} cities every ${HISTORY_POLL_INTERVAL_MS}ms`);
     pollHistory();
     setInterval(pollHistory, HISTORY_POLL_INTERVAL_MS);
 }

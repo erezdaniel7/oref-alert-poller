@@ -1,24 +1,51 @@
 {
     "telegramToken": "YOUR_TELEGRAM_BOT_TOKEN",
-    "telegramChatId": "YOUR_TELEGRAM_CHAT_ID",
     "abaBotUrl": "http://localhost:8888/send-message",
-    "abaBotChatId": "YOUR_WHATSAPP_CHAT_ID",
-    "abaBotFamilyChatId": "YOUR_WHATSAPP_FAMILY_CHAT_ID",
-    "haWebhookUrl": "http://homeassistant.local:8123/api/webhook/YOUR_WEBHOOK_TOKEN",
-    "watchedCities": [
-        "תל אביב - דרום העיר ויפו",
-        "תל אביב - מזרח",
-        "תל אביב - מרכז העיר",
-        "תל אביב - עבר הירקון",
-        "הרצליה - מערב",
-        "הרצליה - מרכז וגליל ים",
-        "ירוחם",
-        "באר שבע - דרום",
-        "באר שבע - מזרח",
-        "באר שבע - מערב",
-        "באר שבע - צפון"
-    ],
-    "homeCity": "ירוחם",
+    "haWebhookUrl": "http://homeassistant.local:8123/api/webhook",
     "pollIntervalMs": 1000,
-    "historyPollIntervalMs": 10000
+    "historyPollIntervalMs": 10000,
+    "watchers": [
+        {
+            "watchCities": [
+                "ירוחם"
+            ],
+            "action": {
+                "telegramChatIds": [
+                    "YOUR_TELEGRAM_CHAT_ID"
+                ],
+                "abaBotChatIds": [
+                    "YOUR_WHATSAPP_CHAT_ID"
+                ],
+                "haWebhookTokens": [
+                    "YOUR_WEBHOOK_TOKEN"
+                ]
+            },
+            "useHistoryFallback": true
+        },
+        {
+            "watchCities": [
+                "ירוחם",
+                "תל אביב - דרום העיר ויפו",
+                "תל אביב - מזרח",
+                "תל אביב - מרכז העיר",
+                "תל אביב - עבר הירקון",
+                "הרצליה - מערב",
+                "הרצליה - מרכז וגליל ים",
+                "ירוחם",
+                "באר שבע - דרום",
+                "באר שבע - מזרח",
+                "באר שבע - מערב",
+                "באר שבע - צפון"
+            ],
+            "action": {
+                "telegramChatIds": [
+                    "YOUR_TELEGRAM_CHAT_ID"
+                ],
+                "abaBotChatIds": [
+                    "YOUR_WHATSAPP_CHAT_ID"
+                ]
+            },
+            "useHistoryFallback": false
+        }
+    ]
 }
