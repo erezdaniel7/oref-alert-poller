@@ -4,6 +4,9 @@
     "haWebhookUrl": "http://homeassistant.local:8123/api/webhook",
     "pollIntervalMs": 1000,
     "historyPollIntervalMs": 10000,
+    "fallbackCities": [
+        "ירוחם"
+    ],
     "watchers": [
         {
             "watchCities": [
@@ -19,8 +22,7 @@
                 "haWebhookTokens": [
                     "YOUR_WEBHOOK_TOKEN"
                 ]
-            },
-            "useHistoryFallback": true
+            }
         },
         {
             "watchCities": [
@@ -44,8 +46,7 @@
                 "abaBotChatIds": [
                     "YOUR_WHATSAPP_CHAT_ID"
                 ]
-            },
-            "useHistoryFallback": false
+            }
         }
     ]
 }

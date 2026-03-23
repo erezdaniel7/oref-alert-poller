@@ -13,7 +13,6 @@ interface WatcherAction {
 interface Watcher {
     watchCities: string[];
     action: WatcherAction;
-    useHistoryFallback: boolean;
 }
 
 interface AppConfig {
@@ -22,6 +21,7 @@ interface AppConfig {
     haWebhookUrl: string;
     pollIntervalMs: number;
     historyPollIntervalMs: number;
+    fallbackCities: string[];
     watchers: Watcher[];
 }
 
@@ -54,11 +54,10 @@ const HA_WEBHOOK_URL = config.haWebhookUrl;
 
 // Collect all watched cities and history cities from watchers
 const ALL_WATCHED_CITIES = new Set<string>();
-const HISTORY_CITIES = new Set<string>();
+const HISTORY_CITIES = new Set<string>(config.fallbackCities);
 for (const w of config.watchers) {
     for (const city of w.watchCities) {
         ALL_WATCHED_CITIES.add(city);
-        if (w.useHistoryFallback) HISTORY_CITIES.add(city);
     }
 }
 
@@ -420,7 +419,6 @@ function processHistoryAlerts(alerts: HistoryAlert[]): void {
 
     for (let wi = 0; wi < config.watchers.length; wi++) {
         const watcher = config.watchers[wi];
-        if (!watcher.useHistoryFallback) continue;
         if (!watcher.watchCities.includes(ha.data)) continue;
 
         const cooldownKey = `w${wi}|${ha.data}|${ha.category_desc}`;
@@ -488,15 +486,15 @@ async function poll(): Promise<void> {
 // ── Main ────────────────────────────────────────────────────────────────────
 function main(): void {
     appendToRawLog("Oref alert poller started");
-    console.log(`Polling ${ALERT_URL} every ${POLL_INTERVAL_MS}ms`);
-    console.log(`Raw log:      ${RAW_LOG}`);
-    console.log(`Filtered log: ${FILTERED_LOG}`);
+    console.log(`[${getTimestamp()}] Polling ${ALERT_URL} every ${POLL_INTERVAL_MS}ms`);
+    console.log(`[${getTimestamp()}] Raw log:      ${RAW_LOG}`);
+    console.log(`[${getTimestamp()}] Filtered log: ${FILTERED_LOG}`);
 
     poll();
     setInterval(poll, POLL_INTERVAL_MS);
 
     // History backup poller (every 10s)
-    console.log(`History poll: ${HISTORY_CITIES.size} cities every ${HISTORY_POLL_INTERVAL_MS}ms`);
+    console.log(`[${getTimestamp()}] History poll: ${HISTORY_CITIES.size} cities every ${HISTORY_POLL_INTERVAL_MS}ms`);
     pollHistory();
     setInterval(pollHistory, HISTORY_POLL_INTERVAL_MS);
 }

@@ -1,6 +1,6 @@
 # Oref Alert Poller
 
-Polls the [Oref](https://www.oref.org.il) alert API and sends notifications for watched cities via **Telegram**, **WhatsApp** (aba_bot), and **Home Assistant**. Includes a backup history poller to catch missed alerts for cities with `useHistoryFallback` enabled.
+Polls the [Oref](https://www.oref.org.il) alert API and sends notifications for watched cities via **Telegram**, **WhatsApp** (aba_bot), and **Home Assistant**. Includes a backup history poller to catch missed alerts for cities listed in `fallbackCities`.
 
 ## Configuration
 
@@ -21,6 +21,7 @@ Edit `config.json` with your values:
 | `haWebhookUrl` | Home Assistant webhook base URL (without token) |
 | `pollIntervalMs` | Main poll interval in ms (default: 1000) |
 | `historyPollIntervalMs` | History poll interval in ms (default: 10000) |
+| `fallbackCities` | List of city names for the backup history poller |
 
 ### Watchers
 
@@ -32,7 +33,6 @@ The `watchers` array defines groups of cities and where to send their alerts. Ea
 | `action.telegramChatIds` | Telegram chat IDs to notify (optional) |
 | `action.abaBotChatIds` | WhatsApp chat IDs to notify via aba_bot (optional) |
 | `action.haWebhookTokens` | Home Assistant webhook tokens — appended to `haWebhookUrl` (optional) |
-| `useHistoryFallback` | If `true`, enables the backup history poller for these cities |
 
 Example with two watchers:
 
@@ -43,6 +43,7 @@ Example with two watchers:
     "haWebhookUrl": "http://homeassistant.local:8123/api/webhook",
     "pollIntervalMs": 1000,
     "historyPollIntervalMs": 10000,
+    "fallbackCities": ["ירוחם"],
     "watchers": [
         {
             "watchCities": ["ירוחם"],
@@ -50,16 +51,14 @@ Example with two watchers:
                 "telegramChatIds": ["YOUR_CHAT_ID"],
                 "abaBotChatIds": ["YOUR_WHATSAPP_CHAT_ID"],
                 "haWebhookTokens": ["YOUR_WEBHOOK_TOKEN"]
-            },
-            "useHistoryFallback": true
+            }
         },
         {
             "watchCities": ["תל אביב - דרום העיר ויפו", "תל אביב - מזרח"],
             "action": {
                 "telegramChatIds": ["YOUR_CHAT_ID"],
                 "abaBotChatIds": ["YOUR_WHATSAPP_CHAT_ID"]
-            },
-            "useHistoryFallback": false
+            }
         }
     ]
 }
@@ -130,7 +129,7 @@ Once installed, the service runs automatically on boot. You can manage it from `
 - Sends notifications to all targets defined in the watcher's `action`
 
 ### History Backup Poller (every 10 seconds)
-- Runs for all cities in watchers with `useHistoryFallback: true`
+- Runs for all cities listed in `fallbackCities`
 - Fetches the Oref alert history API per city
 - Only checks the most recent (first) entry
 - If the alert is less than 10 minutes old and wasn't already sent by the main poller, sends it as a **late alert** with the original alert time and current time
