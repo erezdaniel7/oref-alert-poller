@@ -136,6 +136,16 @@ function getEmoji(cat: string): string {
     return CATEGORY_EMOJI[num] ?? "❓";
 }
 
+// Convert OREF alert ID (Windows FILETIME: 100-ns ticks since 1601-01-01) to Date
+function alertIdToDate(id: string): Date {
+    const unixMs = Number(BigInt(id) / 10000n - 11644473600000n);
+    return new Date(unixMs);
+}
+
+function formatIsraelTime(date: Date): string {
+    return date.toLocaleTimeString("he-IL", { timeZone: "Asia/Jerusalem", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
 function getIsraelUtcOffset(): string {
     // Get current offset for Asia/Jerusalem by formatting a date
     const now = new Date();
@@ -324,7 +334,8 @@ function processAlert(alert: OrefAlert): void {
     const emoji = getEmoji(alert.cat);
     const desc = alert.desc.replace(/\n/g, " ");
     const now = Date.now();
-    const localTime = new Date().toLocaleTimeString("he-IL", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    const alertTime = formatIsraelTime(alertIdToDate(alert.id));
+    const sendTime = formatIsraelTime(new Date());
 
     for (let wi = 0; wi < config.watchers.length; wi++) {
         const watcher = config.watchers[wi];
@@ -343,7 +354,7 @@ function processAlert(alert: OrefAlert): void {
         }
 
         const cityList = citiesToNotify.map(c => `📍 ${c}`).join("\n");
-        const message = `${emoji} - *${alert.title}*\n${desc}\n${cityList}\n🕐 ${localTime}`;
+        const message = `${emoji} - *${alert.title}*\n${desc}\n${cityList}\n⏰ שעת התרעה: ${alertTime}\n🕐 שעת שליחה: ${sendTime}`;
         appendToFilteredLog(message.replace(/\n/g, "----"));
 
         for (const chatId of watcher.action.telegramChatIds ?? []) {
@@ -413,8 +424,8 @@ function processHistoryAlerts(alerts: HistoryAlert[]): void {
     processedHistoryRids.add(ha.rid);
 
     const emoji = getEmoji(String(ha.category));
-    const localTime = new Date().toLocaleTimeString("he-IL", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-    const message = `${emoji} - *${ha.category_desc}*\n📍 ${ha.data}\n⏰ שעת התרעה: ${ha.time}\n🕐 נשלח באיחור: ${localTime}\n⚠️ *התרעה באיחור!*`;
+    const sendTime = formatIsraelTime(new Date());
+    const message = `${emoji} - *${ha.category_desc}*\n📍 ${ha.data}\n⏰ שעת התרעה: ${ha.time}\n🕐 שעת שליחה: ${sendTime}\n⚠️ *התרעה באיחור!*`;
     let sent = false;
 
     for (let wi = 0; wi < config.watchers.length; wi++) {
