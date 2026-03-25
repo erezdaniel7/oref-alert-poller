@@ -109,8 +109,10 @@ const processedAlertIds = new Set<string>();
 const processedHistoryRids = new Set<number>();
 
 // Cooldown: per city+cat+title+desc → last time it was logged
-const COOLDOWN_MS = 9 * 60 * 1000; // 9 minutes
+const COOLDOWN_MS = 9 * 60 * 1000; // 9 minutes (safety fallback)
+const QUIET_GAP_MS = 2 * 60 * 1000; // 2 min quiet = treat as new event
 const lastNotified = new Map<string, number>();
+const lastSeen = new Map<string, number>();
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 if (!fs.existsSync(LOG_DIR)) {
@@ -344,8 +346,12 @@ function processAlert(alert: OrefAlert): void {
 
         const citiesToNotify = matchedCities.filter(city => {
             const key = `w${wi}|${city}|${alert.title}`;
+            const prevSeen = lastSeen.get(key);
             const lastTime = lastNotified.get(key);
-            return !lastTime || now - lastTime >= COOLDOWN_MS;
+            lastSeen.set(key, now);
+            if (!lastTime) return true;
+            if (prevSeen && now - prevSeen >= QUIET_GAP_MS) return true;
+            return now - lastTime >= COOLDOWN_MS;
         });
         if (citiesToNotify.length === 0) continue;
 
@@ -433,8 +439,11 @@ function processHistoryAlerts(alerts: HistoryAlert[]): void {
         if (!watcher.watchCities.includes(ha.data)) continue;
 
         const cooldownKey = `w${wi}|${ha.data}|${ha.category_desc}`;
+        const prevSeen = lastSeen.get(cooldownKey);
         const lastTime = lastNotified.get(cooldownKey);
-        if (lastTime && now - lastTime < COOLDOWN_MS) continue;
+        lastSeen.set(cooldownKey, now);
+        const quietGap = prevSeen ? (now - prevSeen >= QUIET_GAP_MS) : true;
+        if (lastTime && !quietGap && now - lastTime < COOLDOWN_MS) continue;
         lastNotified.set(cooldownKey, now);
         if (!sent) {
             appendToFilteredLog(message.replace(/\n/g, "----"));

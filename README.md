@@ -137,7 +137,12 @@ Once installed, the service runs automatically on boot. You can manage it from `
 
 ## Cooldown
 
-Duplicate alerts for the same **city + title** are suppressed for **9 minutes**. Both pollers share the same cooldown map, so the history poller won't re-send alerts already sent by the main poller.
+Duplicate alerts for the same **city + title** are suppressed using a two-tier strategy:
+
+1. **Quiet-gap reset (2 minutes)** — If no alert is seen for a given city+title for 2+ minutes, the next alert is treated as a new event and triggers a notification immediately.
+2. **Hard cooldown (9 minutes)** — As a safety fallback, even during continuous bursts, the same city+title won't notify more than once every 9 minutes.
+
+Both pollers share the same cooldown and last-seen maps, so the history poller won't re-send alerts already sent by the main poller.
 
 ## Notifications
 
